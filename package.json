@@ -9,6 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "gifsicle-wasm-browser": "^1.5.19",
+    "gifuct-js": "^2.1.2",
     "next": "16.4.6",
     "react": "19.3.0",
     "react-dom": "19.3.0"
