@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { MediaItem } from "@/hooks/useMediaLibrary";
-import type { RenderProgress } from "@/lib/compose/render";
+import { renderPercent, type RenderProgress } from "@/lib/compose/render";
 import { TEXT_LINE_HEIGHT, type Composition, type Layer } from "@/lib/compose/types";
 import { useI18n } from "@/lib/i18n";
 import type { Rect } from "@/lib/types";
@@ -132,7 +132,7 @@ export default function EditorStage({
         ? m.editor.renderDraw(Math.min(rendering.done + 1, rendering.total), rendering.total)
         : m.editor.renderOptimize
     : null;
-  const percent = rendering && rendering.total > 0 ? Math.round((rendering.done / rendering.total) * 100) : 0;
+  const percent = rendering ? renderPercent(rendering) : 0;
 
   return (
     <div ref={hostRef} className="w-full">

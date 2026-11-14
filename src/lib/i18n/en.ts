@@ -173,6 +173,16 @@ const en: Messages = {
       pass: (n, max) => `Pass ${n} of up to ${max}`,
     },
   },
+  tasks: {
+    title: (n) => `In progress · ${n}`,
+    collapse: "Collapse",
+    expand: "Show progress",
+    reading: "Reading the background",
+    slicing: "Cutting panels",
+    optimizing: (s) => `Optimizing slot ${s}`,
+    rendering: (p) => `Rendering panel ${p}`,
+    openHint: "Click to open",
+  },
   editor: {
     edit: "Edit panel",
     editing: (p) => `Panel ${p} · editing`,

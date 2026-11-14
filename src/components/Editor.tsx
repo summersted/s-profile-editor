@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { renderPercent } from "@/lib/compose/render";
 import { renderKey, useCompositions, type ApplyInput } from "@/hooks/useCompositions";
 import { useMediaLibrary } from "@/hooks/useMediaLibrary";
 import { useOverrides } from "@/hooks/useOverrides";
@@ -26,6 +27,7 @@ import ControlsPanel, { type SliceSettings } from "./ControlsPanel";
 import HelpBlurb from "./HelpBlurb";
 import PanelDialog from "./PanelDialog";
 import PanelEditor from "./editor/PanelEditor";
+import TaskTray, { type TaskView } from "./TaskTray";
 import ProfilePreview from "./ProfilePreview";
 import UploadZone from "./UploadZone";
 import { SectionTitle, inputClass, secondaryButtonClass } from "./ui";
@@ -269,6 +271,46 @@ export default function Editor() {
   const partlyOutside = plan.slices.some((s) => s.coverage < 1 && !panelSources[panelKey(s.panel)]);
   const lowRes = source !== null && source.width < PROFILE.bgWidth * 0.95;
 
+  // Everything running in the background, for the status tray.
+  const tasks: TaskView[] = [];
+  const openSlotOf = (s: PlannedSlice | undefined) => (s ? () => setOpenSlot(slotId(s)) : undefined);
+  if (loading) tasks.push({ id: "read", title: m.tasks.reading, stage: m.upload.reading, percent: null });
+  if (slices.progress) {
+    const { done, total } = slices.progress;
+    tasks.push({
+      id: "slice",
+      title: m.tasks.slicing,
+      stage: `${done}/${total}`,
+      percent: total > 0 ? Math.round((done / total) * 100) : null,
+    });
+  }
+  for (const [index, p] of Object.entries(slices.optimizing)) {
+    const view = i18n.progress(p);
+    tasks.push({
+      id: `optimize-${index}`,
+      title: m.tasks.optimizing(Number(index) + 1),
+      stage: view.stage,
+      detail: [view.detail, view.pass].filter(Boolean).join(" · ") || null,
+      percent: p === "queued" ? null : view.percent,
+      onOpen: openSlotOf(plan.slices[Number(index)]),
+    });
+  }
+  for (const [key, r] of Object.entries(composing)) {
+    const panel = Number(key);
+    tasks.push({
+      id: `render-${key}`,
+      title: m.tasks.rendering(panel + 1),
+      stage:
+        r.stage === "decode"
+          ? m.editor.renderDecode
+          : r.stage === "draw"
+            ? m.editor.renderDraw(Math.min(r.done + 1, r.total), r.total)
+            : m.editor.renderOptimize,
+      percent: renderPercent(r),
+      onOpen: openSlotOf(plan.slices.find((s) => s.panel === panel)),
+    });
+  }
+
   let status = "";
   if (slices.progress) status = m.preview.slicing(slices.progress.done, slices.progress.total);
   else if (files.length > 0) status = m.preview.files(files.length, bytes(totalBytes));
@@ -416,6 +458,9 @@ export default function Editor() {
           }}
         />
       )}
+
+      {/* After the dialog, so it is raised above it (see TaskTray). */}
+      <TaskTray tasks={tasks} raiseKey={`${openSlot}|${editing}`} />
     </div>
   );
 }

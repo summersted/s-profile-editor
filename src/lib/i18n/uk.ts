@@ -180,6 +180,16 @@ const uk: Messages = {
       pass: (n, max) => `Прохід ${n} з ≤${max}`,
     },
   },
+  tasks: {
+    title: (n) => `Виконується · ${n}`,
+    collapse: "Згорнути",
+    expand: "Показати прогрес",
+    reading: "Читаємо фон",
+    slicing: "Нарізаємо панелі",
+    optimizing: (s) => `Оптимізація слота ${s}`,
+    rendering: (p) => `Рендер панелі ${p}`,
+    openHint: "Клікни, щоб відкрити",
+  },
   editor: {
     edit: "Редагувати панель",
     editing: (p) => `Панель ${p} · редагування`,
