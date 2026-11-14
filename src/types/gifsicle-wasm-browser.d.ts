@@ -10,7 +10,8 @@ declare module "gifsicle-wasm-browser" {
     isStrict?: boolean;
   }
   const gifsicle: {
-    run(options: GifsicleRunOptions): Promise<File[]>;
+    /** Resolves with the files written to /out — empty if the command failed, null if the worker crashed. */
+    run(options: GifsicleRunOptions): Promise<File[] | null>;
   };
   export default gifsicle;
 }

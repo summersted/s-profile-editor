@@ -5,12 +5,15 @@ import { useRef, useState } from "react";
 interface UploadZoneProps {
   onFile: (file: File) => void;
   error: string | null;
+  loading?: boolean;
   fileName?: string;
+  /** One-line summary of the loaded file (size, frames…). */
+  fileInfo?: string;
 }
 
 const ACCEPT = "image/gif,image/png,image/jpeg,.gif,.png,.jpg,.jpeg";
 
-export default function UploadZone({ onFile, error, fileName }: UploadZoneProps) {
+export default function UploadZone({ onFile, error, loading, fileName, fileInfo }: UploadZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -43,13 +46,13 @@ export default function UploadZone({ onFile, error, fileName }: UploadZoneProps)
         }}
         className={`flex cursor-pointer flex-col items-center gap-2 rounded-md border-2 border-dashed px-4 py-8 text-center transition-colors ${
           dragOver
-            ? "border-[#66c0f4] bg-[#66c0f4]/10"
-            : "border-[#2a3f5a] bg-[#16202d] hover:border-[#416179]"
+            ? "border-accent bg-accent/10"
+            : "border-line bg-panel hover:border-line-hover"
         }`}
       >
         <svg
           viewBox="0 0 24 24"
-          className="h-8 w-8 text-[#66c0f4]"
+          className="h-8 w-8 text-accent"
           fill="none"
           stroke="currentColor"
           strokeWidth="1.5"
@@ -61,11 +64,18 @@ export default function UploadZone({ onFile, error, fileName }: UploadZoneProps)
             d="M12 16V4m0 0 4 4m-4-4-4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
           />
         </svg>
-        <p className="text-sm text-[#c7d5e0]">
+        <p className="text-sm text-foreground">
           Перетягни GIF, PNG або JPG сюди, або натисни щоб вибрати файл
         </p>
-        {fileName && (
-          <p className="max-w-full truncate text-xs text-[#8f98a0]">{fileName}</p>
+        {loading ? (
+          <p className="text-xs text-muted">Читаємо файл…</p>
+        ) : (
+          fileName && (
+            <p className="max-w-full truncate text-xs text-muted">
+              {fileName}
+              {fileInfo && <span className="block">{fileInfo}</span>}
+            </p>
+          )
         )}
         <input
           ref={inputRef}
@@ -79,7 +89,7 @@ export default function UploadZone({ onFile, error, fileName }: UploadZoneProps)
         />
       </div>
       {error && (
-        <p className="rounded-md border border-[#7a2b2b] bg-[#3a1f1f] px-3 py-2 text-xs text-[#f4a0a0]">
+        <p className="rounded-md border border-danger-line bg-danger-bg px-3 py-2 text-xs text-danger">
           {error}
         </p>
       )}

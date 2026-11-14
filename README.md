@@ -1,36 +1,49 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SProfile Editor
 
-## Getting Started
+Веб-апка, яка нарізає GIF / PNG / JPG на слоти Steam showcase (Featured Artwork, Artwork
+Showcase), показує превʼю того, як це ляже на профіль, і дотискає GIF-и під ліміт Steam 5 МБ.
 
-First, run the development server:
+Усе працює в браузері — файли нікуди не вантажаться.
+
+## Запуск
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev     # http://localhost:3000
+npm run lint
+npm run build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Як це влаштовано
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+src/
+  app/                 Next.js app router: layout, сторінка, глобальні стилі (палітра — токени в globals.css)
+  components/          UI: Editor збирає все докупи, решта — панелі без власної логіки
+  hooks/
+    useSource.ts       завантажене джерело + його preview URL
+    useSlices.ts       нарізані файли, оптимізація, життєвий цикл blob URL
+  lib/
+    steam/showcases.ts розміри слотів і ліміти Steam (джерела — docs/steam-specs.md)
+    steam/plan.ts      чиста математика: як джерело лягає на смугу вітрини, crop кожного слота
+    gif/info.ts        легкий парсер GIF (розмір, кадри, затримки) без декодування пікселів
+    gif/gifsicle.ts    обгортка над gifsicle-wasm-browser
+    image/decode.ts    читання метаданих джерела
+    image/slice.ts     нарізка: canvas для статики, gifsicle для GIF (паралельно по слотах)
+    optimize/          оптимізатор GIF
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Оптимізатор GIF
 
-## Learn More
+Налаштування — в блоці «Оптимізатор GIF» над результатами.
 
-To learn more about Next.js, take a look at the following resources:
+- **Авто** — задаєш ліміт (за замовчуванням 5 МБ) і що можна жертвувати: lossy, палітру,
+  кадри. Спершу пробується стиснення без втрат, далі драбинка від найменш помітних втрат до
+  найбільш (`AUTO_MOVES` у `lib/optimize/settings.ts`). Потрібний щабель шукається стрибками +
+  бінарним пошуком, тож це 1–8 проходів gifsicle замість перебору всіх 14.
+- **Вручну** — lossy, кількість кольорів, проріджування кадрів і роздільність застосовуються
+  рівно як виставлено.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Оптимізація завжди стартує з оригінальної нарізки, а не з попереднього результату, тому
+налаштування можна крутити й перезапускати без накопичення втрат. При проріджуванні кадрів
+затримки викинутих кадрів додаються до залишених — тривалість анімації не міняється.

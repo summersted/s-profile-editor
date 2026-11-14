@@ -1,98 +1,111 @@
-import type { Rect, SliceOutput, SlicePlan, SourceImage } from "@/lib/types";
+import { mapPool } from "../async";
+import { GIF_INPUT, gifConcurrency, runGifsicle, type GifsicleRunner } from "../gif/gifsicle";
+import { pixelRect } from "../steam/plan";
+import type { PlannedSlice, Size, SlicePlan, SourceImage, SourceKind } from "../types";
+
+/** One cut slot file, before it gets a blob URL in the UI layer. */
+export interface SliceCut {
+  index: number;
+  blob: Blob;
+  filename: string;
+  kind: SourceKind;
+  width: number;
+  height: number;
+}
+
+type Progress = (done: number, total: number) => void;
 
 /**
  * Cut the source into per-slot files according to the plan.
  * Static images go through canvas (PNG out); GIFs go through gifsicle-wasm
  * so animation, timing and transparency survive untouched.
  */
-export async function slice(
+export function slice(
   source: SourceImage,
   plan: SlicePlan,
-  onProgress?: (done: number, total: number) => void,
-): Promise<SliceOutput[]> {
-  const outputs =
-    source.kind === "gif"
-      ? await sliceGif(source, plan, onProgress)
-      : await sliceStatic(source, plan, onProgress);
-  return outputs;
+  onProgress?: Progress,
+): Promise<SliceCut[]> {
+  return source.kind === "gif"
+    ? sliceGif(source, plan, onProgress)
+    : sliceStatic(source, plan, onProgress);
 }
 
 async function sliceStatic(
   source: SourceImage,
   plan: SlicePlan,
-  onProgress?: (done: number, total: number) => void,
-): Promise<SliceOutput[]> {
+  onProgress?: Progress,
+): Promise<SliceCut[]> {
   const bitmap = await createImageBitmap(source.file);
   try {
-    const outputs: SliceOutput[] = [];
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas 2d context недоступний");
+
+    const cuts: SliceCut[] = [];
     for (const s of plan.slices) {
-      const canvas = document.createElement("canvas");
+      const crop = pixelRect(s.source, source);
+      // Resizing the canvas also clears it, so one canvas serves every slice.
       canvas.width = s.output.w;
       canvas.height = s.output.h;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("canvas 2d context недоступний");
       ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(
-        bitmap,
-        s.source.x, s.source.y, s.source.w, s.source.h,
-        0, 0, s.output.w, s.output.h,
-      );
-      const blob = await new Promise<Blob>((resolve, reject) =>
-        canvas.toBlob(
-          (b) => (b ? resolve(b) : reject(new Error("toBlob failed"))),
-          "image/png",
-        ),
-      );
-      outputs.push(toOutput(s.index, blob, "png"));
-      onProgress?.(outputs.length, plan.slices.length);
+      ctx.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h, 0, 0, s.output.w, s.output.h);
+      cuts.push(toCut(s, await canvasToPng(canvas), "static"));
+      onProgress?.(cuts.length, plan.slices.length);
     }
-    return outputs;
+    return cuts;
   } finally {
     bitmap.close();
   }
 }
 
+function canvasToPng(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) =>
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error("Не вдалося закодувати PNG"))),
+      "image/png",
+    ),
+  );
+}
+
 async function sliceGif(
   source: SourceImage,
   plan: SlicePlan,
-  onProgress?: (done: number, total: number) => void,
-): Promise<SliceOutput[]> {
-  const { default: gifsicle } = await import("gifsicle-wasm-browser");
-  const outputs: SliceOutput[] = [];
-  // One gifsicle.run per slice: crop + resize in a single pass.
-  for (const s of plan.slices) {
-    const crop = cropArg(s.source, source);
-    const resize = `--resize ${s.output.w}x${s.output.h}`;
-    const files = await gifsicle.run({
-      input: [{ file: source.file, name: "in.gif" }],
-      command: [`--crop ${crop} ${resize} in.gif -o /out/slice.gif`],
-    });
-    if (!files[0]) throw new Error(`gifsicle не повернув slice ${s.index}`);
-    outputs.push(toOutput(s.index, files[0], "gif"));
-    onProgress?.(outputs.length, plan.slices.length);
+  onProgress?: Progress,
+  run: GifsicleRunner = runGifsicle,
+): Promise<SliceCut[]> {
+  // Read the file once; every worker gets its own clone of this buffer.
+  const input = await source.file.arrayBuffer();
+  let done = 0;
+  return mapPool(plan.slices, gifConcurrency(), async (s) => {
+    const blob = await run(input, gifSliceArgs(s, source));
+    if (!blob) throw new Error(`gifsicle не повернув слот ${s.index + 1}`);
+    onProgress?.(++done, plan.slices.length);
+    return toCut(s, blob, "gif");
+  });
+}
+
+/**
+ * gifsicle args for one slice: crop, resize only if the crop isn't already
+ * the right size, and a lossless -O2 pass — cropped/resized frames come out
+ * unoptimized otherwise, several times bigger than they need to be.
+ */
+export function gifSliceArgs(s: PlannedSlice, bounds: Size): string {
+  const crop = pixelRect(s.source, bounds);
+  const args = ["-O2", `--crop ${crop.x},${crop.y}+${crop.w}x${crop.h}`];
+  if (crop.w !== s.output.w || crop.h !== s.output.h) {
+    args.push(`--resize ${s.output.w}x${s.output.h}`);
   }
-  return outputs;
+  args.push(GIF_INPUT);
+  return args.join(" ");
 }
 
-/** gifsicle --crop X,Y+WxH with the rect clamped to the gif bounds. */
-function cropArg(r: Rect, bounds: { width: number; height: number }): string {
-  const x = Math.max(0, Math.round(r.x));
-  const y = Math.max(0, Math.round(r.y));
-  const w = Math.min(bounds.width - x, Math.max(1, Math.round(r.w)));
-  const h = Math.min(bounds.height - y, Math.max(1, Math.round(r.h)));
-  return `${x},${y}+${w}x${h}`;
-}
-
-function toOutput(index: number, blob: Blob, ext: string): SliceOutput {
+function toCut(s: PlannedSlice, blob: Blob, kind: SourceKind): SliceCut {
   return {
-    index,
+    index: s.index,
     blob,
-    url: URL.createObjectURL(blob),
-    bytes: blob.size,
-    filename: `slice-${index + 1}.${ext}`,
+    filename: `slice-${s.index + 1}.${kind === "gif" ? "gif" : "png"}`,
+    kind,
+    width: s.output.w,
+    height: s.output.h,
   };
-}
-
-export function releaseOutputs(outputs: SliceOutput[]): void {
-  for (const o of outputs) URL.revokeObjectURL(o.url);
 }

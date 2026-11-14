@@ -1,131 +1,80 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { DEFAULT_FRAMING, type Framing, type SliceOutput, type SourceImage } from "@/lib/types";
-import { SHOWCASES, type ShowcaseSpec } from "@/lib/steam/showcases";
-import { buildPlan } from "@/lib/steam/plan";
-import { loadSource, releaseSource } from "@/lib/image/decode";
-import { slice as sliceSource, releaseOutputs } from "@/lib/image/slice";
-import { optimizeGif } from "@/lib/image/optimize";
-import UploadZone from "./UploadZone";
-import ControlsPanel from "./ControlsPanel";
-import ShowcasePreview from "./ShowcasePreview";
-import SliceResults, { type OptimizeMeta } from "./SliceResults";
+import { useSlices } from "@/hooks/useSlices";
+import { useSource } from "@/hooks/useSource";
+import { formatBytes, formatSeconds } from "@/lib/format";
+import { DEFAULT_OPTIMIZE_SETTINGS, type OptimizeSettings } from "@/lib/optimize/settings";
+import { buildPlan, planKey, planUpscale } from "@/lib/steam/plan";
+import { ROW_HEIGHT, SHOWCASES } from "@/lib/steam/showcases";
+import { DEFAULT_FRAMING, type SourceImage } from "@/lib/types";
+import ControlsPanel, { type SliceSettings } from "./ControlsPanel";
 import HelpBlurb from "./HelpBlurb";
+import OptimizerPanel from "./OptimizerPanel";
+import ShowcasePreview from "./ShowcasePreview";
+import SliceResults from "./SliceResults";
+import UploadZone from "./UploadZone";
+import { SectionTitle, primaryButtonClass } from "./ui";
 
-type ShowcaseId = ShowcaseSpec["id"];
+const DEFAULT_SETTINGS: SliceSettings = {
+  showcaseId: "featured",
+  sections: 1,
+  rowHeight: ROW_HEIGHT.default,
+  framing: DEFAULT_FRAMING,
+  scale: 1,
+};
+
+/** Above this the export is visibly stretched; below it's just rounding. */
+const UPSCALE_WARN = 1.05;
+
+function describeSource(source: SourceImage): string {
+  const parts = [`${source.width}×${source.height}`, formatBytes(source.file.size)];
+  if (source.frameCount > 1) {
+    parts.push(`${source.frameCount} кадрів`, formatSeconds(source.durationMs));
+  }
+  return parts.join(" · ");
+}
 
 export default function Editor() {
-  const [source, setSource] = useState<SourceImage | null>(null);
-  const [sourceError, setSourceError] = useState<string | null>(null);
+  const { source, error: sourceError, loading, load } = useSource();
+  const slices = useSlices();
+  const [settings, setSettings] = useState<SliceSettings>(DEFAULT_SETTINGS);
+  const [optimizeSettings, setOptimizeSettings] =
+    useState<OptimizeSettings>(DEFAULT_OPTIMIZE_SETTINGS);
 
-  const [showcaseId, setShowcaseId] = useState<ShowcaseId>("featured");
-  const [sections, setSections] = useState(1);
-  const [rowHeight, setRowHeight] = useState(200);
-  const [framing, setFraming] = useState<Framing>(DEFAULT_FRAMING);
-  const [scale, setScale] = useState<1 | 2>(1);
+  const plan = useMemo(
+    () =>
+      source &&
+      buildPlan({
+        spec: SHOWCASES[settings.showcaseId],
+        sections: settings.sections,
+        rowHeight: settings.rowHeight,
+        source,
+        framing: settings.framing,
+        scale: settings.scale,
+      }),
+    [source, settings],
+  );
 
-  const [outputs, setOutputs] = useState<SliceOutput[]>([]);
-  const [slicing, setSlicing] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [sliceError, setSliceError] = useState<string | null>(null);
-
-  const [optimizing, setOptimizing] = useState<Record<number, boolean>>({});
-  const [optimizeMeta, setOptimizeMeta] = useState<Record<number, OptimizeMeta>>({});
-
-  const spec = SHOWCASES[showcaseId];
-
-  const plan = useMemo(() => {
-    if (!source) return null;
-    return buildPlan({
-      spec,
-      sections,
-      rowHeight,
-      source: { width: source.width, height: source.height },
-      framing,
-      scale,
-    });
-  }, [spec, sections, rowHeight, source, framing, scale]);
+  const stale = useMemo(
+    () => plan !== null && slices.slicedKey !== null && planKey(plan) !== slices.slicedKey,
+    [plan, slices.slicedKey],
+  );
 
   async function handleFile(file: File) {
-    try {
-      const next = await loadSource(file);
-      if (source) releaseSource(source);
-      if (outputs.length) releaseOutputs(outputs);
-      setOutputs([]);
-      setOptimizing({});
-      setOptimizeMeta({});
-      setSliceError(null);
-      setSource(next);
-      setSourceError(null);
-    } catch (e) {
-      setSourceError(e instanceof Error ? e.message : "Не вдалося прочитати файл");
-    }
+    // Files cut from the previous source are meaningless for the new one.
+    if (await load(file)) slices.clear();
   }
 
-  function handleShowcaseChange(id: ShowcaseId) {
-    setShowcaseId(id);
-    setSections((s) => Math.min(s, SHOWCASES[id].maxSections));
-  }
-
-  async function handleSlice() {
-    if (!source || !plan) return;
-    setSlicing(true);
-    setSliceError(null);
-    setProgress({ done: 0, total: plan.slices.length });
-    try {
-      const next = await sliceSource(source, plan, (done, total) => setProgress({ done, total }));
-      if (outputs.length) releaseOutputs(outputs);
-      setOutputs(next);
-      setOptimizing({});
-      setOptimizeMeta({});
-    } catch (e) {
-      setSliceError(e instanceof Error ? e.message : "Не вдалося нарізати зображення");
-    } finally {
-      setSlicing(false);
-    }
-  }
-
-  async function handleOptimize(index: number) {
-    const target = outputs.find((o) => o.index === index);
-    if (!target) return;
-    setOptimizing((prev) => ({ ...prev, [index]: true }));
-    try {
-      const result = await optimizeGif(target.blob);
-      const nextUrl = URL.createObjectURL(result.blob);
-      URL.revokeObjectURL(target.url);
-      setOutputs((prev) =>
-        prev.map((o) =>
-          o.index === index ? { ...o, blob: result.blob, bytes: result.bytes, url: nextUrl } : o,
-        ),
-      );
-      setOptimizeMeta((prev) => ({
-        ...prev,
-        [index]: { label: result.applied?.label ?? null, fits: result.fits },
-      }));
-    } finally {
-      setOptimizing((prev) => ({ ...prev, [index]: false }));
-    }
-  }
-
-  function handleDownloadAll() {
-    outputs.forEach((output, i) => {
-      setTimeout(() => {
-        const a = document.createElement("a");
-        a.href = output.url;
-        a.download = output.filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }, i * 150);
-    });
-  }
+  const gifIndexes = slices.files.filter((f) => f.kind === "gif").map((f) => f.index);
+  const optimizerBusy = Object.keys(slices.optimizing).length > 0;
+  const upscale = plan ? planUpscale(plan) : 1;
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-8">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-8">
       <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-[#c7d5e0]">SProfile Editor</h1>
-        <p className="text-sm text-[#8f98a0]">
+        <h1 className="text-2xl font-bold text-foreground">SProfile Editor</h1>
+        <p className="text-sm text-muted">
           Нарізає GIF, PNG або JPG на слоти Steam showcase — з превʼю того, як це виглядатиме на
           профілі.
         </p>
@@ -133,65 +82,77 @@ export default function Editor() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[360px_1fr]">
         <div className="flex flex-col gap-4">
-          <UploadZone onFile={handleFile} error={sourceError} fileName={source?.file.name} />
+          <UploadZone
+            onFile={handleFile}
+            error={sourceError}
+            loading={loading}
+            fileName={source?.file.name}
+            fileInfo={source ? describeSource(source) : undefined}
+          />
           <ControlsPanel
-            spec={spec}
-            showcaseId={showcaseId}
-            onShowcaseChange={handleShowcaseChange}
-            sections={sections}
-            onSectionsChange={(n) => setSections(Number.isFinite(n) ? n : 1)}
-            rowHeight={rowHeight}
-            onRowHeightChange={(n) => setRowHeight(Number.isFinite(n) ? n : 1)}
-            framing={framing}
-            onFramingChange={setFraming}
-            scale={scale}
-            onScaleChange={setScale}
+            settings={settings}
+            onChange={(patch) => setSettings((prev) => ({ ...prev, ...patch }))}
             disabled={!source}
           />
           <HelpBlurb />
         </div>
 
-        <div className="flex flex-col gap-4">
-          <div className="rounded-md border border-[#2a3f5a] bg-[#171a21] p-4">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[#66c0f4]">
-              Превʼю вітрини
-            </h2>
+        <div className="flex min-w-0 flex-col gap-4">
+          <div className="rounded-md border border-line bg-surface p-4">
+            <div className="mb-3">
+              <SectionTitle>Превʼю вітрини</SectionTitle>
+            </div>
             {source && plan ? (
               <ShowcasePreview source={source} plan={plan} />
             ) : (
-              <p className="py-12 text-center text-sm text-[#8f98a0]">
+              <p className="py-12 text-center text-sm text-muted">
                 Завантаж зображення щоб побачити превʼю
               </p>
             )}
           </div>
 
-          {plan && source && (
+          {source && plan && (
             <>
+              {upscale > UPSCALE_WARN && (
+                <p className="rounded bg-warn-bg px-3 py-2 text-xs text-warn">
+                  Джерело замале для цих налаштувань: його розтягне в {upscale.toFixed(2)}x, буде
+                  мильно. Зменш зум, масштаб експорту або візьми більшу картинку.
+                </p>
+              )}
+
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
-                  onClick={handleSlice}
-                  disabled={slicing}
-                  className="rounded bg-[#66c0f4] px-4 py-2 text-sm font-semibold text-[#0e141b] hover:bg-[#8ad4ff] disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => slices.run(source, plan)}
+                  disabled={slices.slicing}
+                  className={`${primaryButtonClass} px-4 py-2 text-sm`}
                 >
-                  {slicing ? "Нарізаємо…" : "Нарізати"}
+                  {slices.slicing ? "Нарізаємо…" : "Нарізати"}
                 </button>
-                {slicing && progress && (
-                  <span className="text-xs text-[#8f98a0]">
-                    {progress.done}/{progress.total}
+                {slices.progress && (
+                  <span className="text-xs text-muted">
+                    {slices.progress.done}/{slices.progress.total}
                   </span>
                 )}
-                {sliceError && <span className="text-xs text-[#f4a0a0]">{sliceError}</span>}
+                {slices.error && <span className="text-xs text-danger">{slices.error}</span>}
               </div>
 
+              {gifIndexes.length > 0 && (
+                <OptimizerPanel
+                  settings={optimizeSettings}
+                  onChange={setOptimizeSettings}
+                  fileCount={gifIndexes.length}
+                  busy={optimizerBusy}
+                  onOptimizeAll={() => slices.optimize(gifIndexes, optimizeSettings)}
+                />
+              )}
+
               <SliceResults
-                outputs={outputs}
-                plan={plan}
-                sourceKind={source.kind}
-                optimizing={optimizing}
-                optimizeMeta={optimizeMeta}
-                onOptimize={handleOptimize}
-                onDownloadAll={handleDownloadAll}
+                files={slices.files}
+                stale={stale}
+                optimizing={slices.optimizing}
+                onOptimize={(index) => slices.optimize([index], optimizeSettings)}
+                onRevert={slices.revert}
               />
             </>
           )}

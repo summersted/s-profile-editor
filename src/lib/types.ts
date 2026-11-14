@@ -15,6 +15,11 @@ export interface SourceImage {
   previewUrl: string;
 }
 
+export interface Size {
+  width: number;
+  height: number;
+}
+
 export interface Rect {
   x: number;
   y: number;
@@ -35,7 +40,7 @@ export const DEFAULT_FRAMING: Framing = { zoom: 1, panX: 0.5, panY: 0.5 };
 
 export interface PlannedSlice {
   index: number;
-  /** Crop rect in source pixels. */
+  /** Crop rect in source pixels (fractional; snap with `pixelRect` before cutting). */
   source: Rect;
   /** Position inside the assembled strip, in strip pixels. */
   strip: Rect;
@@ -53,10 +58,28 @@ export interface SlicePlan {
   slices: PlannedSlice[];
 }
 
-export interface SliceOutput {
+/** What the optimizer did to a file, for display next to it. */
+export interface OptimizeSummary {
+  /** Human-readable description of the applied step; null = nothing helped. */
+  label: string | null;
+  /** Whether the result is within the target size. */
+  fits: boolean;
+  targetBytes: number;
+}
+
+/** One exported slot file as shown in the results grid. */
+export interface SliceFile {
   index: number;
-  blob: Blob;
-  url: string;
-  bytes: number;
   filename: string;
+  kind: SourceKind;
+  /** Pixel size of the file as cut (before any optimizer downscale). */
+  width: number;
+  height: number;
+  /** The file exactly as cut — the optimizer always starts from this, never from its own output. */
+  original: Blob;
+  /** Current downloadable version: `original` or its optimized replacement. */
+  blob: Blob;
+  /** Blob URL of `blob`. */
+  url: string;
+  optimized: OptimizeSummary | null;
 }
