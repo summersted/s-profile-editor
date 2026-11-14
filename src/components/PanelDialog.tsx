@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Failure } from "@/lib/errors";
 import { useI18n } from "@/lib/i18n";
 import type { OptimizeProgress, OptimizeSettings } from "@/lib/optimize/settings";
@@ -21,6 +21,15 @@ interface PanelDialogProps {
   file: SliceFile | null;
   /** User's own file covering this slot's panel, if any. */
   override: SourceImage | undefined;
+  /** The panel's picture is the own file or an edited composition, not the background. */
+  customSource: boolean;
+  /** The panel editor is open instead of the slot view. */
+  editing: boolean;
+  onEditingChange: (editing: boolean) => void;
+  /** The editor UI, shown while `editing`. */
+  editor: ReactNode;
+  /** A composition is still rendering; "Done" waits for it. */
+  rendering: boolean;
   /** The slot lies completely outside the background. */
   outsideBackground: boolean;
   slicing: boolean;
@@ -43,7 +52,7 @@ interface PanelDialogProps {
 
 /** One slot: what's in it, your own file instead, download, squeeze. Mounted = open. */
 export default function PanelDialog(props: PanelDialogProps) {
-  const { index, file, override, outsideBackground, slicing, onClose } = props;
+  const { index, file, customSource, outsideBackground, slicing, editing, onClose } = props;
   const { m } = useI18n();
   const ref = useRef<HTMLDialogElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -54,7 +63,7 @@ export default function PanelDialog(props: PanelDialogProps) {
   }, []);
 
   // The file shown may still be the previous content while the slot is re-cut.
-  const pending = slicing && (!file || file.custom !== !!override);
+  const pending = slicing && (!file || file.custom !== customSource);
 
   return (
     <dialog
@@ -64,19 +73,47 @@ export default function PanelDialog(props: PanelDialogProps) {
       onClick={(e) => {
         if (e.target === e.currentTarget) ref.current?.close();
       }}
-      className="m-auto w-[min(960px,calc(100vw-2rem))] rounded-md border border-line bg-panel p-0 text-foreground backdrop:bg-black/70"
+      className={`m-auto rounded-md border border-line bg-panel p-0 text-foreground backdrop:bg-black/70 ${
+        editing ? "w-[min(1320px,calc(100vw-2rem))]" : "w-[min(960px,calc(100vw-2rem))]"
+      }`}
     >
       <div className="flex max-h-[calc(100vh-4rem)] flex-col gap-4 overflow-y-auto p-5">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold">
-            {m.slot.name(index + 1)}
-            {file && (
-              <span className="font-normal text-muted">
-                {" "}
-                · {file.filename} · {file.width}×{file.height}
-              </span>
+            {editing ? (
+              m.editor.editing(props.panel + 1)
+            ) : (
+              <>
+                {m.slot.name(index + 1)}
+                {file && (
+                  <span className="font-normal text-muted">
+                    {" "}
+                    · {file.filename} · {file.width}×{file.height}
+                  </span>
+                )}
+              </>
             )}
           </h2>
+          <div className="ml-auto flex items-center gap-2">
+            {editing ? (
+              <button
+                type="button"
+                disabled={props.rendering}
+                onClick={() => props.onEditingChange(false)}
+                className={`${primaryButtonClass} px-4 py-1.5 text-sm`}
+              >
+                {m.editor.done}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => props.onEditingChange(true)}
+                className={`${secondaryButtonClass} px-3 py-1.5 text-sm`}
+              >
+                ✎ {m.editor.edit}
+              </button>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => ref.current?.close()}
@@ -87,6 +124,9 @@ export default function PanelDialog(props: PanelDialogProps) {
           </button>
         </div>
 
+        {editing ? (
+          props.editor
+        ) : (
         <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
           <div
             onDragOver={(e) => {
@@ -132,6 +172,7 @@ export default function PanelDialog(props: PanelDialogProps) {
             {props.optimizing !== undefined && <ProgressOverlay progress={props.optimizing} />}
           </div>
         </div>
+        )}
       </div>
     </dialog>
   );

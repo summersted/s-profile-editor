@@ -24,6 +24,8 @@ interface ProfilePreviewProps {
   imageUrl: string | null;
   /** `panelKey` → user's own file covering that panel instead of the background. */
   overrides: Readonly<Record<string, SourceImage>>;
+  /** Panels whose picture is an edited composition (labelled differently). */
+  editedPanels: ReadonlySet<number>;
   files: SliceFile[];
   slicing: boolean;
   optimizing: Readonly<Record<number, unknown>>;
@@ -41,6 +43,7 @@ export default function ProfilePreview({
   layout,
   imageUrl,
   overrides,
+  editedPanels,
   files,
   slicing,
   optimizing,
@@ -141,6 +144,7 @@ export default function ProfilePreview({
                   slice={s}
                   file={fileByIndex.get(s.index)}
                   custom={!!own}
+                  edited={editedPanels.has(s.panel)}
                   interactive={imageUrl !== null}
                   slicing={slicing}
                   optimizing={optimizing[s.index] !== undefined}
@@ -170,6 +174,7 @@ function Slot({
   slice,
   file,
   custom,
+  edited,
   interactive,
   slicing,
   optimizing,
@@ -180,6 +185,8 @@ function Slot({
   file: SliceFile | undefined;
   /** Shows the user's own file instead of the background. */
   custom: boolean;
+  /** The panel was edited in the panel editor. */
+  edited: boolean;
   /** Clickable at all (false before a background is loaded). */
   interactive: boolean;
   slicing: boolean;
@@ -219,7 +226,7 @@ function Slot({
       )}
       {custom && (
         <span className="absolute bottom-2 left-2 rounded bg-accent px-2 py-1 text-[13px] leading-none text-ink">
-          {m.slot.ownFile}
+          {edited ? m.editor.edited : m.slot.ownFile}
         </span>
       )}
       {interactive && (

@@ -166,6 +166,48 @@ export interface Messages {
       pass: (current: number, max: number) => string;
     };
   };
+  /** Panel editor: layers, media library, text, undo/redo. */
+  editor: {
+    edit: string;
+    editing: (panel: number) => string;
+    done: string;
+    undo: string;
+    redo: string;
+    undoTitle: string;
+    redoTitle: string;
+    media: string;
+    uploadMedia: string;
+    mediaHint: string;
+    mediaEmpty: string;
+    removeMedia: string;
+    mediaInUse: string;
+    addText: string;
+    defaultText: string;
+    layers: string;
+    layersEmpty: string;
+    textLayer: string;
+    moveUp: string;
+    moveDown: string;
+    deleteLayer: string;
+    properties: string;
+    text: string;
+    font: string;
+    size: string;
+    color: string;
+    bold: string;
+    outline: string;
+    outlineWidth: string;
+    rotation: string;
+    resetRotation: string;
+    animated: (name: string, frames: number) => string;
+    still: string;
+    gapHint: string;
+    hint: string;
+    renderDecode: string;
+    renderDraw: (done: number, total: number) => string;
+    renderOptimize: string;
+    edited: string;
+  };
   /** Pieces of an optimizer step description. */
   steps: {
     lossless: string;
