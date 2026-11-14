@@ -22,7 +22,7 @@ export default function ShowcasePreview({ source, plan }: ShowcasePreviewProps) 
   return (
     <div className="flex flex-col gap-2">
       <div
-        className="relative w-full overflow-hidden rounded-sm border border-black/40 bg-[#1b2838]"
+        className="relative w-full overflow-hidden rounded-sm border border-black/40 bg-background"
         style={{ aspectRatio: `${plan.strip.w} / ${plan.strip.h}` }}
       >
         {plan.slices.map((s) => {
@@ -48,7 +48,7 @@ export default function ShowcasePreview({ source, plan }: ShowcasePreviewProps) 
           );
         })}
       </div>
-      <p className="text-xs text-[#8f98a0]">
+      <p className="text-xs text-muted">
         Темні смужки — це фон сторінки профілю, що проглядає крізь зазори між слотами. Саме так це
         виглядатиме на самому Steam.
         {source.kind === "gif" && (

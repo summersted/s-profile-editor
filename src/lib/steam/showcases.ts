@@ -9,8 +9,10 @@ export interface SlotSpec {
   width: number;
 }
 
+export type ShowcaseId = "featured" | "artwork";
+
 export interface ShowcaseSpec {
-  id: "featured" | "artwork";
+  id: ShowcaseId;
   name: string;
   /** Slots laid out left-to-right within one section row. */
   slots: SlotSpec[];
@@ -18,12 +20,14 @@ export interface ShowcaseSpec {
   slotGap: number;
   /** Vertical gap between stacked section rows, px. */
   rowGap: number;
-  /** Steam upload hard cap per file, bytes. */
-  maxFileBytes: number;
   maxSections: number;
 }
 
+/** Steam upload hard cap per file, bytes (same for every showcase type). */
 export const FILE_LIMIT_BYTES = 5 * 1024 * 1024;
+
+/** Bounds for the user-chosen section height, in profile px. */
+export const ROW_HEIGHT = { min: 50, max: 2000, default: 200 } as const;
 
 /**
  * Vertical gap between stacked showcases on a profile.
@@ -32,14 +36,13 @@ export const FILE_LIMIT_BYTES = 5 * 1024 * 1024;
  */
 const ROW_GAP = 0;
 
-export const SHOWCASES: Record<ShowcaseSpec["id"], ShowcaseSpec> = {
+export const SHOWCASES: Record<ShowcaseId, ShowcaseSpec> = {
   featured: {
     id: "featured",
     name: "Featured Artwork (1 слот, 630px)",
     slots: [{ width: 630 }],
     slotGap: 0,
     rowGap: ROW_GAP,
-    maxFileBytes: FILE_LIMIT_BYTES,
     maxSections: 6,
   },
   artwork: {
@@ -49,10 +52,11 @@ export const SHOWCASES: Record<ShowcaseSpec["id"], ShowcaseSpec> = {
     // CONFLICTING 8 vs 9 — see docs/steam-specs.md. 8 is the most-cited value.
     slotGap: 8,
     rowGap: ROW_GAP,
-    maxFileBytes: FILE_LIMIT_BYTES,
     maxSections: 6,
   },
 };
+
+export const SHOWCASE_LIST: ShowcaseSpec[] = Object.values(SHOWCASES);
 
 /** Total strip width of one section row: slots plus internal gaps. */
 export function stripWidth(spec: ShowcaseSpec): number {

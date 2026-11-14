@@ -1,4 +1,4 @@
-import type { Framing, PlannedSlice, Rect, SlicePlan } from "@/lib/types";
+import type { Framing, PlannedSlice, Rect, Size, SlicePlan } from "../types";
 import { type ShowcaseSpec, stripWidth } from "./showcases";
 
 /**
@@ -16,7 +16,7 @@ export function buildPlan(opts: {
   spec: ShowcaseSpec;
   sections: number;
   rowHeight: number;
-  source: { width: number; height: number };
+  source: Size;
   framing: Framing;
   /** Export scale: 1 = profile px, 2 = HiDPI uploads. */
   scale?: number;
@@ -73,7 +73,7 @@ export function buildPlan(opts: {
  * shrunk by zoom and positioned by pan.
  */
 function coverWindow(
-  source: { width: number; height: number },
+  source: Size,
   aspect: number,
   framing: Framing,
 ): Rect {
@@ -94,10 +94,40 @@ function coverWindow(
   return { x, y, w, h };
 }
 
+/**
+ * Snap a fractional crop rect to whole source pixels, clamped to the image.
+ * Edges (not sizes) are rounded, so two rects that touch in the plan still
+ * touch after snapping — no 1px overlap or hole between neighbouring slices.
+ */
+export function pixelRect(r: Rect, bounds: Size): Rect {
+  const x0 = clamp(Math.round(r.x), 0, bounds.width - 1);
+  const y0 = clamp(Math.round(r.y), 0, bounds.height - 1);
+  const x1 = clamp(Math.round(r.x + r.w), x0 + 1, bounds.width);
+  const y1 = clamp(Math.round(r.y + r.h), y0 + 1, bounds.height);
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/**
+ * How much the most-stretched slice is enlarged relative to its source crop.
+ * >1 means the export is upscaled and will look soft.
+ */
+export function planUpscale(plan: SlicePlan): number {
+  return Math.max(...plan.slices.map((s) => s.output.w / s.source.w));
+}
+
+/** Stable identity of a plan: equal keys produce byte-identical cuts. */
+export function planKey(plan: SlicePlan): string {
+  return JSON.stringify(plan.slices.map((s) => [s.source, s.output]));
+}
+
+function clamp(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v));
+}
+
 function clamp01(v: number): number {
-  return Math.min(1, Math.max(0, v));
+  return clamp(v, 0, 1);
 }
 
 function clampInt(v: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, Math.round(v)));
+  return clamp(Math.round(v), min, max);
 }
