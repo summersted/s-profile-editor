@@ -32,7 +32,7 @@ import { SectionTitle, inputClass, secondaryButtonClass } from "./ui";
 
 const DEFAULT_SETTINGS: SliceSettings = {
   showcaseId: "artwork",
-  sections: 2,
+  sections: 1,
   rowHeight: ROW_HEIGHT.default,
   panelHeights: {},
   panelTypes: {},
