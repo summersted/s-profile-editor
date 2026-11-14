@@ -1,143 +1,221 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { errorMessage, mapPool } from "@/lib/async";
+import { mapPool } from "@/lib/async";
+import type { Failure } from "@/lib/errors";
+import { sliceFileName } from "@/lib/download";
 import { gifConcurrency } from "@/lib/gif/gifsicle";
-import { slice } from "@/lib/image/slice";
+import { slice, type SliceCut } from "@/lib/image/slice";
+import { optimizeImage } from "@/lib/optimize/image";
 import { optimizeGif } from "@/lib/optimize/optimize";
-import type { OptimizeSettings } from "@/lib/optimize/settings";
-import { planKey } from "@/lib/steam/plan";
-import type { SliceFile, SlicePlan, SourceImage } from "@/lib/types";
+import type { OptimizeProgress, OptimizeSettings } from "@/lib/optimize/settings";
+import { ownFileCrop, panelKey } from "@/lib/steam/plan";
+import type { PlannedSlice, SliceFile, SlicePlan, SourceImage } from "@/lib/types";
+import type { Overrides } from "./useOverrides";
 
 export interface SliceProgress {
   done: number;
   total: number;
 }
 
+interface ActiveRun {
+  id: number;
+  key: string;
+  abort: AbortController;
+}
+
+/** What a slot's file is made of. Equal keys = byte-identical file. */
+function slotKey(plan: SlicePlan, source: SourceImage, s: PlannedSlice, overrides: Overrides): string | null {
+  const size = `${s.output.w}x${s.output.h}`;
+  const own = overrides[panelKey(s.panel)];
+  if (own) {
+    const r = ownFileCrop(own, plan.panels[s.panel].strip, s.page);
+    return `own|${own.previewUrl}|${r.x},${r.y},${r.w},${r.h}|${size}`;
+  }
+  if (s.coverage === 0) return null;
+  const r = s.source;
+  return `bg|${source.previewUrl}|${r.x},${r.y},${r.w},${r.h}|${size}`;
+}
+
+function toFile(cut: SliceCut, cutKey: string): SliceFile {
+  return {
+    index: cut.index,
+    filename: sliceFileName(cut.index, cut.blob.type),
+    kind: cut.kind,
+    cutKey,
+    custom: cut.custom,
+    width: cut.width,
+    height: cut.height,
+    original: cut.blob,
+    blob: cut.blob,
+    url: URL.createObjectURL(cut.blob),
+    optimized: null,
+  };
+}
+
 /**
  * Owns the cut slot files: slicing, per-file optimization and the blob URLs
  * that go with them. Every file's URL is created and revoked here and nowhere else.
+ *
+ * `run` is safe to call on every settings change: only slots whose content
+ * actually changed are re-cut (the rest keep their file and any optimization),
+ * and a newer run aborts the one in flight.
  */
 export function useSlices() {
   const [files, setFiles] = useState<SliceFile[]>([]);
-  /** `planKey` of the plan the current files were cut with. */
-  const [slicedKey, setSlicedKey] = useState<string | null>(null);
   const [progress, setProgress] = useState<SliceProgress | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  /** index → what the optimizer is trying right now. */
-  const [optimizing, setOptimizing] = useState<Record<number, string>>({});
+  const [error, setError] = useState<Failure | null>(null);
+  /** index → optimizer progress for that file ("queued" = waiting for a worker). */
+  const [optimizing, setOptimizing] = useState<Record<number, OptimizeProgress | "queued">>({});
 
   // Source of truth for async code; `files` state mirrors it for rendering.
   const held = useRef<SliceFile[]>([]);
-  // Bumped whenever the file set is replaced, so late async results get dropped.
-  const generation = useRef(0);
-  // Identifies the latest slicing run; an older run that finishes late is ignored.
-  const latestRun = useRef(0);
+  /** Run key the current `held` set corresponds to. */
+  const heldKey = useRef<string | null>(null);
+  const active = useRef<ActiveRun | null>(null);
+  const runCounter = useRef(0);
 
+  /** Install a new file set; revokes URLs of files that didn't make it into it. */
   const replaceAll = useCallback((next: SliceFile[], key: string | null) => {
-    generation.current++;
-    for (const f of held.current) URL.revokeObjectURL(f.url);
+    const kept = new Set(next);
+    for (const f of held.current) if (!kept.has(f)) URL.revokeObjectURL(f.url);
     held.current = next;
+    heldKey.current = key;
     setFiles(next);
-    setSlicedKey(key);
-    setOptimizing({});
+    // Optimizations of files that were kept keep running; the rest are orphaned.
+    setOptimizing((prev) =>
+      Object.fromEntries(Object.entries(prev).filter(([i]) => next.some((f) => f.index === +i))),
+    );
   }, []);
 
-  const patchFile = useCallback((index: number, patch: (f: SliceFile) => SliceFile) => {
-    held.current = held.current.map((f) => (f.index === index ? patch(f) : f));
-    setFiles(held.current);
+  const cancelRun = useCallback(() => {
+    active.current?.abort.abort();
+    active.current = null;
+    setProgress(null);
   }, []);
 
   const clear = useCallback(() => {
-    latestRun.current++;
+    cancelRun();
     replaceAll([], null);
-    setProgress(null);
     setError(null);
-  }, [replaceAll]);
+  }, [cancelRun, replaceAll]);
 
   const run = useCallback(
-    async (source: SourceImage, plan: SlicePlan) => {
-      const id = ++latestRun.current;
+    async (source: SourceImage, plan: SlicePlan, overrides: Overrides = {}) => {
+      const keys = new Map<number, string>();
+      for (const s of plan.slices) {
+        const k = slotKey(plan, source, s, overrides);
+        if (k) keys.set(s.index, k);
+      }
+      const key = [...keys].map(([i, k]) => `${i}=${k}`).join(";");
+      if (active.current?.key === key) return;
+      if (heldKey.current === key) {
+        // Settings went back to what we already have: drop whatever is in flight.
+        cancelRun();
+        return;
+      }
+
+      active.current?.abort.abort();
+      const me: ActiveRun = { id: ++runCounter.current, key, abort: new AbortController() };
+      active.current = me;
+      const isCurrent = () => active.current?.id === me.id;
+
+      // Slots whose content didn't change keep their file, optimization included.
+      const reused = held.current.filter((f) => keys.get(f.index) === f.cutKey);
+      const skip = new Set(reused.map((f) => f.index));
+
       setError(null);
-      setProgress({ done: 0, total: plan.slices.length });
+      setProgress({ done: 0, total: keys.size - skip.size });
       try {
-        const cuts = await slice(source, plan, (done, total) => {
-          if (id === latestRun.current) setProgress({ done, total });
+        const cuts = await slice(source, plan, {
+          signal: me.abort.signal,
+          overrides,
+          skip,
+          onProgress: (done, total) => {
+            if (isCurrent()) setProgress({ done, total });
+          },
         });
-        if (id !== latestRun.current) return;
-        replaceAll(
-          cuts.map((cut) => ({
-            index: cut.index,
-            filename: cut.filename,
-            kind: cut.kind,
-            width: cut.width,
-            height: cut.height,
-            original: cut.blob,
-            blob: cut.blob,
-            url: URL.createObjectURL(cut.blob),
-            optimized: null,
-          })),
-          planKey(plan),
-        );
+        if (!isCurrent()) return;
+        // Files reused at the start may have been optimized since: take their latest state.
+        const latest = new Map(held.current.map((f) => [f.index, f]));
+        const next = [
+          ...reused.map((f) => {
+            const now = latest.get(f.index);
+            return now && now.cutKey === f.cutKey ? now : f;
+          }),
+          ...cuts.map((cut) => toFile(cut, keys.get(cut.index) ?? "")),
+        ].sort((a, b) => a.index - b.index);
+        replaceAll(next, key);
       } catch (e) {
-        if (id === latestRun.current) setError(errorMessage(e, "Не вдалося нарізати зображення"));
+        if (isCurrent()) setError({ kind: "slice", cause: e });
       } finally {
-        if (id === latestRun.current) setProgress(null);
+        if (isCurrent()) {
+          active.current = null;
+          setProgress(null);
+        }
       }
     },
-    [replaceAll],
+    [cancelRun, replaceAll],
   );
 
   /** Swap a file's current blob, keeping `original` so it can be redone or reverted. */
   const setBlob = useCallback(
     (index: number, blob: Blob, optimized: SliceFile["optimized"]) => {
-      patchFile(index, (f) => {
+      held.current = held.current.map((f) => {
+        if (f.index !== index) return f;
         if (f.blob === blob) return { ...f, optimized };
         URL.revokeObjectURL(f.url);
-        return { ...f, blob, url: URL.createObjectURL(blob), optimized };
+        return {
+          ...f,
+          blob,
+          url: URL.createObjectURL(blob),
+          filename: sliceFileName(f.index, blob.type),
+          optimized,
+        };
       });
+      setFiles(held.current);
     },
-    [patchFile],
+    [],
   );
 
   const optimize = useCallback(
     async (indexes: number[], settings: OptimizeSettings) => {
-      const gen = generation.current;
-      const targets = held.current.filter((f) => f.kind === "gif" && indexes.includes(f.index));
+      const targets = held.current.filter((f) => indexes.includes(f.index));
       setError(null);
       setOptimizing((prev) => ({
         ...prev,
-        ...Object.fromEntries(targets.map((f) => [f.index, "в черзі"])),
+        ...Object.fromEntries(targets.map((f) => [f.index, "queued" as const])),
       }));
 
       await mapPool(targets, gifConcurrency(), async (file) => {
+        // The slot may be re-cut or cleared while we work; then the result is stale.
+        const stillThere = () =>
+          held.current.some((f) => f.index === file.index && f.cutKey === file.cutKey);
+        const onProgress = (progress: OptimizeProgress) => {
+          if (stillThere()) setOptimizing((prev) => ({ ...prev, [file.index]: progress }));
+        };
         try {
           // Always from the pristine cut: re-optimizing must not stack lossy passes.
-          const result = await optimizeGif(file.original, settings, {
-            onAttempt: (label) => {
-              if (gen === generation.current) {
-                setOptimizing((prev) => ({ ...prev, [file.index]: label }));
-              }
-            },
-          });
-          if (gen !== generation.current) return;
+          const result =
+            file.kind === "gif"
+              ? await optimizeGif(file.original, settings, { onProgress })
+              : await optimizeImage(file.original, settings, { onProgress });
+          if (!stillThere()) return;
           setBlob(file.index, result.blob, {
             label: result.label,
             fits: result.fits,
             targetBytes: settings.targetBytes,
           });
         } catch (e) {
-          if (gen === generation.current) {
-            setError(`${file.filename}: ${errorMessage(e, "не вдалося оптимізувати")}`);
+          if (stillThere()) {
+            setError({ kind: "optimize", cause: e, filename: file.filename });
           }
         } finally {
-          if (gen === generation.current) {
-            setOptimizing((prev) => {
-              const next = { ...prev };
-              delete next[file.index];
-              return next;
-            });
-          }
+          setOptimizing((prev) => {
+            const next = { ...prev };
+            delete next[file.index];
+            return next;
+          });
         }
       });
     },
@@ -155,8 +233,8 @@ export function useSlices() {
 
   useEffect(
     () => () => {
-      generation.current++;
-      latestRun.current++;
+      active.current?.abort.abort();
+      active.current = null;
       for (const f of held.current) URL.revokeObjectURL(f.url);
       held.current = [];
     },
@@ -165,7 +243,6 @@ export function useSlices() {
 
   return {
     files,
-    slicedKey,
     slicing: progress !== null,
     progress,
     error,

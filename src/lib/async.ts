@@ -1,18 +1,21 @@
 /**
  * Map over `items` with at most `limit` calls in flight. Results keep input
  * order. The first rejection stops new work from starting and is rethrown.
+ * An aborted `signal` also stops new work; already-running calls finish and
+ * the skipped slots stay empty.
  */
 export async function mapPool<T, R>(
   items: readonly T[],
   limit: number,
   fn: (item: T, index: number) => Promise<R>,
+  signal?: AbortSignal,
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
   let next = 0;
   let failed = false;
 
   async function worker(): Promise<void> {
-    while (!failed && next < items.length) {
+    while (!failed && !signal?.aborted && next < items.length) {
       const i = next++;
       try {
         results[i] = await fn(items[i], i);
@@ -26,8 +29,4 @@ export async function mapPool<T, R>(
   const workers = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, worker);
   await Promise.all(workers);
   return results;
-}
-
-export function errorMessage(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
 }

@@ -1,3 +1,5 @@
+import { AppError } from "../errors";
+
 /**
  * Minimal GIF block scanner: reads only the metadata we need (canvas size,
  * frame count, per-frame delays) by walking block headers. Pixel data is
@@ -18,7 +20,7 @@ const GRAPHIC_CONTROL = 0xf9;
 
 export function parseGifInfo(bytes: Uint8Array): GifInfo {
   if (bytes.length < 13 || ascii(bytes, 0, 3) !== "GIF") {
-    throw new Error("Це не GIF-файл");
+    throw new AppError("notGif");
   }
   const width = u16(bytes, 6);
   const height = u16(bytes, 8);

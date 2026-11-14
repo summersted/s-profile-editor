@@ -1,3 +1,6 @@
+import type { OptimizeLabel } from "./optimize/settings";
+import type { ShowcaseId } from "./steam/showcases";
+
 /** Source media the user dropped in: either a still background or an animated GIF. */
 export type SourceKind = "gif" | "static";
 
@@ -27,51 +30,71 @@ export interface Rect {
   h: number;
 }
 
-/** How the source is fitted into the showcase strip before cutting. */
-export interface Framing {
-  /** 1 = source exactly covers the strip. >1 zooms in. */
-  zoom: number;
-  /** 0..1 pan within the overflow. 0.5 = centred. */
-  panX: number;
-  panY: number;
+/** One showcase block on the profile page. */
+export interface PanelBox {
+  index: number;
+  /** Showcase type of this panel. */
+  showcaseId: ShowcaseId;
+  /** True if the type comes from a per-panel setting, not the shared default. */
+  customType: boolean;
+  /** Height of the artwork area, page px. */
+  height: number;
+  /** True if the height comes from a per-panel setting, not the shared default. */
+  customHeight: boolean;
+  /** Whole block in page px: title bar on top, artwork below it. */
+  box: Rect;
+  /** The row of slot images, gaps included, page px. A panel's own file is fitted to this. */
+  strip: Rect;
 }
 
-export const DEFAULT_FRAMING: Framing = { zoom: 1, panX: 0.5, panY: 0.5 };
-
+/** One uploadable file: a slot of a showcase. */
 export interface PlannedSlice {
   index: number;
-  /** Crop rect in source pixels (fractional; snap with `pixelRect` before cutting). */
+  /** Which showcase (PanelBox.index) the slot belongs to. */
+  panel: number;
+  /** Position of the slot inside its showcase, left to right. */
+  slot: number;
+  /** Where the slot sits on the page, page px. */
+  page: Rect;
+  /** Matching region of the background, source px (fractional; snap with `cropBox`). */
   source: Rect;
-  /** Position inside the assembled strip, in strip pixels. */
-  strip: Rect;
-  /** Pixel size each exported file should have. */
+  /** Pixel size of the exported file. */
   output: { w: number; h: number };
+  /** Share of the slot covered by the background, 0..1. 0 = nothing to cut. */
+  coverage: number;
 }
 
 export interface SlicePlan {
   showcaseId: string;
   sections: number;
-  /** Size of the assembled strip in showcase pixels (slots + gaps). */
-  strip: { w: number; h: number };
-  /** Region of the source that the strip maps onto. */
-  sourceWindow: Rect;
+  /** Size of the content column area to draw, page px. */
+  page: { w: number; h: number };
+  /** Where the background is drawn, page px. */
+  bg: Rect;
+  /** Export px per page px (1, or 2 for 4K backgrounds). */
+  density: number;
+  panels: PanelBox[];
   slices: PlannedSlice[];
 }
 
 /** What the optimizer did to a file, for display next to it. */
 export interface OptimizeSummary {
-  /** Human-readable description of the applied step; null = nothing helped. */
-  label: string | null;
+  /** The applied step; null = file left as is. */
+  label: OptimizeLabel | null;
   /** Whether the result is within the target size. */
   fits: boolean;
   targetBytes: number;
 }
 
-/** One exported slot file as shown in the results grid. */
+/** One exported slot file. */
 export interface SliceFile {
   index: number;
   filename: string;
   kind: SourceKind;
+  /** Identity of what was cut: same key = same bytes, so the file (and its optimization) can be kept. */
+  cutKey: string;
+  /** True if the slot holds the user's own file instead of a piece of the background. */
+  custom: boolean;
   /** Pixel size of the file as cut (before any optimizer downscale). */
   width: number;
   height: number;

@@ -1,3 +1,5 @@
+import { AppError } from "../errors";
+
 /**
  * Thin wrapper over gifsicle-wasm-browser.
  *
@@ -28,7 +30,7 @@ export const runGifsicle: GifsicleRunner = async (input, args) => {
     return files?.[0] ?? null;
   } catch (e) {
     // The library rejects with strings/undefined; normalize to a real Error.
-    throw new Error(`gifsicle впав${e ? `: ${String(e)}` : ""}`);
+    throw new AppError("gifsicleCrashed", { detail: e ? String(e) : undefined });
   }
 };
 

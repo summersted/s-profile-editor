@@ -1,186 +1,254 @@
 "use client";
 
+import { useI18n } from "@/lib/i18n";
 import {
   COLOR_OPTIONS,
   FRAME_STEP_OPTIONS,
+  JPEG_QUALITY_RANGE,
   LOSSY_RANGE,
   SCALE_OPTIONS,
-  describeStep,
   type OptimizeMode,
   type OptimizeSettings,
   type OptimizeStep,
 } from "@/lib/optimize/settings";
+import type { SourceKind } from "@/lib/types";
 import {
   CheckField,
+  InfoTip,
   NumberField,
   RangeField,
-  SectionTitle,
   SelectField,
+  TipLabel,
   primaryButtonClass,
+  secondaryButtonClass,
 } from "./ui";
 
 interface OptimizerPanelProps {
+  /** Which file type the controls are for. Settings for both live in one object. */
+  kind: SourceKind;
   settings: OptimizeSettings;
   onChange: (settings: OptimizeSettings) => void;
-  /** How many GIF files "optimize all" would process. */
-  fileCount: number;
   busy: boolean;
+  onOptimize: () => void;
+  /** How many files "apply to all" would process; the button hides when ≤ 1. */
+  allCount: number;
   onOptimizeAll: () => void;
 }
 
 const MB = 1024 * 1024;
+const MODES: readonly OptimizeMode[] = ["auto", "manual"];
 
-const MODES: ReadonlyArray<{ value: OptimizeMode; label: string }> = [
-  { value: "auto", label: "Авто — вкласти в ліміт" },
-  { value: "manual", label: "Вручну" },
-];
-
-const COLOR_SELECT = COLOR_OPTIONS.map((c) => ({
-  value: c,
-  label: c === 256 ? "не чіпати" : String(c),
-}));
-
-const FRAME_SELECT = FRAME_STEP_OPTIONS.map((n) => ({
-  value: n,
-  label: n === 1 ? "усі" : `кожен ${n}-й`,
-}));
-
-const SCALE_SELECT = SCALE_OPTIONS.map((s) => ({ value: s, label: `${Math.round(s * 100)}%` }));
-
-/** Configurator for the GIF optimizer: what to aim for and what it may sacrifice. */
+/** Configurator for the slot optimizer: what to aim for and what it may sacrifice. */
 export default function OptimizerPanel({
+  kind,
   settings,
   onChange,
-  fileCount,
   busy,
+  onOptimize,
+  allCount,
   onOptimizeAll,
 }: OptimizerPanelProps) {
-  const { auto, manual } = settings;
+  const { m } = useI18n();
+  const o = m.optimizer;
+  const set = (patch: Partial<OptimizeSettings>) => onChange({ ...settings, ...patch });
   const setAuto = (patch: Partial<OptimizeSettings["auto"]>) =>
-    onChange({ ...settings, auto: { ...auto, ...patch } });
-  const setManual = (patch: Partial<OptimizeStep>) =>
-    onChange({ ...settings, manual: { ...manual, ...patch } });
+    set({ auto: { ...settings.auto, ...patch } });
 
   return (
-    <div className="flex flex-col gap-3 rounded-md border border-line bg-panel p-4">
-      <SectionTitle>Оптимізатор GIF</SectionTitle>
-
+    <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex overflow-hidden rounded border border-line text-sm" role="radiogroup">
-          {MODES.map((m) => (
+          {MODES.map((mode) => (
             <button
-              key={m.value}
+              key={mode}
               type="button"
               role="radio"
-              aria-checked={settings.mode === m.value}
-              onClick={() => onChange({ ...settings, mode: m.value })}
+              aria-checked={settings.mode === mode}
+              onClick={() => set({ mode })}
               className={`px-3 py-1.5 ${
-                settings.mode === m.value
+                settings.mode === mode
                   ? "bg-accent font-semibold text-ink"
                   : "bg-background text-foreground hover:bg-line"
               }`}
             >
-              {m.label}
+              {m.optimizer[mode]}
             </button>
           ))}
         </div>
+        <span className="self-center">
+          <InfoTip text={o.tips.mode} label={o.moreInfo} />
+        </span>
         <div className="w-36">
           <NumberField
-            label="Ліміт файлу, МБ"
+            label={
+              <TipLabel tip={o.tips.limit} tipLabel={o.moreInfo}>
+                {o.limitMb}
+              </TipLabel>
+            }
             min={0.1}
             max={20}
             step={0.1}
             value={Number((settings.targetBytes / MB).toFixed(1))}
-            onChange={(mb) => onChange({ ...settings, targetBytes: Math.round(mb * MB) })}
+            onChange={(mb) => set({ targetBytes: Math.round(mb * MB) })}
           />
         </div>
       </div>
 
-      {settings.mode === "auto" ? (
-        <div className="flex flex-col gap-2">
-          <p className="text-xs text-muted">
-            Спершу пробує стиснути без втрат. Якщо файл усе ще більший за ліміт — поступово
-            додає втрати з дозволених нижче, і зупиняється на найлегшому варіанті, який
-            вкладається.
-          </p>
-          <CheckField
-            label="Lossy-стиснення"
-            hint="Легкий шум у деталях; на малих значеннях майже непомітно."
-            checked={auto.lossy}
-            onChange={(lossy) => setAuto({ lossy })}
-          />
-          <CheckField
-            label="Зменшення палітри"
-            hint="Менше кольорів — можуть зʼявитись смуги на градієнтах."
-            checked={auto.colors}
-            onChange={(colors) => setAuto({ colors })}
-          />
-          <CheckField
-            label="Проріджування кадрів"
-            hint="Викидає кожен 2-й/3-й кадр; тривалість та сама, рух менш плавний."
-            checked={auto.fps}
-            onChange={(fps) => setAuto({ fps })}
-          />
-          {!auto.lossy && !auto.colors && !auto.fps && (
-            <p className="text-xs text-warn">
-              Нічого не дозволено — буде тільки стиснення без втрат, у ліміт може не влізти.
-            </p>
-          )}
-        </div>
+      {kind === "gif" ? (
+        <GifControls settings={settings} set={set} setAuto={setAuto} />
       ) : (
-        <div className="flex flex-col gap-3">
-          <RangeField
-            label="Lossy"
-            min={LOSSY_RANGE.min}
-            max={LOSSY_RANGE.max}
-            step={LOSSY_RANGE.step}
-            value={manual.lossy}
-            format={(v) => (v === 0 ? "вимкнено" : String(v))}
-            onChange={(lossy) => setManual({ lossy })}
-          />
-          <div className="grid grid-cols-3 gap-3">
-            <SelectField
-              label="Кольорів"
-              value={manual.colors}
-              options={COLOR_SELECT}
-              onChange={(colors) => setManual({ colors })}
-            />
-            <SelectField
-              label="Кадри"
-              value={manual.frameStep}
-              options={FRAME_SELECT}
-              onChange={(frameStep) => setManual({ frameStep })}
-            />
-            <SelectField
-              label="Роздільність"
-              value={manual.scale}
-              options={SCALE_SELECT}
-              onChange={(scale) => setManual({ scale })}
-            />
-          </div>
-          <p className="text-xs text-muted">
-            Застосується рівно це: {describeStep(manual)}. Ліміт тут лише для позначки
-            «вкладається / ні».
-            {manual.scale < 1 &&
-              " Зменшена роздільність: Steam розтягне файл до ширини слота, картинка буде мʼякша."}
-          </p>
-        </div>
+        <ImageControls settings={settings} set={set} setAuto={setAuto} />
       )}
 
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          disabled={busy || fileCount === 0}
-          onClick={onOptimizeAll}
+          disabled={busy}
+          onClick={onOptimize}
           className={`${primaryButtonClass} px-4 py-2 text-sm`}
         >
-          {busy ? "Оптимізуємо…" : `Оптимізувати всі (${fileCount})`}
+          {busy ? m.optimizer.optimizing : m.optimizer.optimize}
         </button>
-        <span className="text-xs text-muted">
-          Кожен запуск стартує з оригінальної нарізки, тож налаштування можна міняти й
-          перезапускати без накопичення втрат.
-        </span>
+        {allCount > 1 && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onOptimizeAll}
+            className={`${secondaryButtonClass} px-4 py-2 text-sm`}
+          >
+            {m.optimizer.applyAll(allCount)}
+          </button>
+        )}
       </div>
+      <p className="text-xs text-muted">{m.optimizer.restartNote}</p>
+    </div>
+  );
+}
+
+type ControlsProps = {
+  settings: OptimizeSettings;
+  set: (patch: Partial<OptimizeSettings>) => void;
+  setAuto: (patch: Partial<OptimizeSettings["auto"]>) => void;
+};
+
+function GifControls({ settings, set, setAuto }: ControlsProps) {
+  const { m, step } = useI18n();
+  const o = m.optimizer;
+  const { auto, manual } = settings;
+  const setManual = (patch: Partial<OptimizeStep>) => set({ manual: { ...manual, ...patch } });
+
+  if (settings.mode === "auto") {
+    return (
+      <div className="flex flex-col gap-2">
+        <p className="text-xs text-muted">{o.gifAutoHint}</p>
+        <CheckField
+          label={<TipLabel tip={o.tips.lossy} tipLabel={o.moreInfo}>{o.lossy}</TipLabel>}
+          hint={o.lossyHint}
+          checked={auto.lossy}
+          onChange={(lossy) => setAuto({ lossy })}
+        />
+        <CheckField
+          label={<TipLabel tip={o.tips.palette} tipLabel={o.moreInfo}>{o.palette}</TipLabel>}
+          hint={o.paletteHint}
+          checked={auto.colors}
+          onChange={(colors) => setAuto({ colors })}
+        />
+        <CheckField
+          label={<TipLabel tip={o.tips.dropFrames} tipLabel={o.moreInfo}>{o.dropFrames}</TipLabel>}
+          hint={o.dropFramesHint}
+          checked={auto.fps}
+          onChange={(fps) => setAuto({ fps })}
+        />
+        {!auto.lossy && !auto.colors && !auto.fps && (
+          <p className="text-xs text-warn">{o.nothingAllowed}</p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <RangeField
+        label={<TipLabel tip={o.tips.lossyLevel} tipLabel={o.moreInfo}>{o.lossyLabel}</TipLabel>}
+        min={LOSSY_RANGE.min}
+        max={LOSSY_RANGE.max}
+        step={LOSSY_RANGE.step}
+        value={manual.lossy}
+        format={(v) => (v === 0 ? o.off : String(v))}
+        onChange={(lossy) => setManual({ lossy })}
+      />
+      <div className="grid grid-cols-3 gap-3">
+        <SelectField
+          label={<TipLabel tip={o.tips.colors} tipLabel={o.moreInfo}>{o.colors}</TipLabel>}
+          value={manual.colors}
+          options={COLOR_OPTIONS.map((c) => ({ value: c, label: c === 256 ? o.untouched : String(c) }))}
+          onChange={(colors) => setManual({ colors })}
+        />
+        <SelectField
+          label={<TipLabel tip={o.tips.frames} tipLabel={o.moreInfo}>{o.frames}</TipLabel>}
+          value={manual.frameStep}
+          options={FRAME_STEP_OPTIONS.map((n) => ({
+            value: n,
+            label: n === 1 ? o.allFrames : o.everyNth(n),
+          }))}
+          onChange={(frameStep) => setManual({ frameStep })}
+        />
+        <SelectField
+          label={<TipLabel tip={o.tips.resolution} tipLabel={o.moreInfo}>{o.resolution}</TipLabel>}
+          value={manual.scale}
+          options={SCALE_OPTIONS.map((s) => ({ value: s, label: `${Math.round(s * 100)}%` }))}
+          onChange={(scale) => setManual({ scale })}
+        />
+      </div>
+      <p className="text-xs text-muted">
+        {o.manualExact(step({ type: "gif", step: manual }))}
+        {manual.scale < 1 && o.lowResNote}
+      </p>
+    </div>
+  );
+}
+
+function ImageControls({ settings, set, setAuto }: ControlsProps) {
+  const { m, step } = useI18n();
+  const o = m.optimizer;
+  const { image } = settings;
+
+  if (settings.mode === "auto") {
+    return (
+      <div className="flex flex-col gap-2">
+        <p className="text-xs text-muted">{o.imageAutoHint}</p>
+        <CheckField
+          label={<TipLabel tip={o.tips.allowJpeg} tipLabel={o.moreInfo}>{o.allowJpeg}</TipLabel>}
+          hint={o.allowJpegHint}
+          checked={settings.auto.jpeg}
+          onChange={(jpeg) => setAuto({ jpeg })}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <SelectField
+        label={<TipLabel tip={o.tips.format} tipLabel={o.moreInfo}>{o.format}</TipLabel>}
+        value={image.format}
+        options={[
+          { value: "jpeg" as const, label: "JPEG" },
+          { value: "png" as const, label: o.pngUnchanged },
+        ]}
+        onChange={(format) => set({ image: { ...image, format } })}
+      />
+      {image.format === "jpeg" && (
+        <RangeField
+          label={<TipLabel tip={o.tips.jpegQuality} tipLabel={o.moreInfo}>{o.jpegQuality}</TipLabel>}
+          min={JPEG_QUALITY_RANGE.min}
+          max={JPEG_QUALITY_RANGE.max}
+          step={JPEG_QUALITY_RANGE.step}
+          value={image.quality}
+          format={(quality) => step({ type: "jpeg", quality })}
+          onChange={(quality) => set({ image: { ...image, quality } })}
+        />
+      )}
     </div>
   );
 }

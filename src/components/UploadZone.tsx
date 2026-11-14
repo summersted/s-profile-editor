@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useI18n } from "@/lib/i18n";
 
 interface UploadZoneProps {
   onFile: (file: File) => void;
@@ -11,9 +12,10 @@ interface UploadZoneProps {
   fileInfo?: string;
 }
 
-const ACCEPT = "image/gif,image/png,image/jpeg,.gif,.png,.jpg,.jpeg";
+export const ACCEPT_IMAGES = "image/gif,image/png,image/jpeg,.gif,.png,.jpg,.jpeg";
 
 export default function UploadZone({ onFile, error, loading, fileName, fileInfo }: UploadZoneProps) {
+  const { m } = useI18n();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -64,11 +66,9 @@ export default function UploadZone({ onFile, error, loading, fileName, fileInfo 
             d="M12 16V4m0 0 4 4m-4-4-4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
           />
         </svg>
-        <p className="text-sm text-foreground">
-          Перетягни GIF, PNG або JPG сюди, або натисни щоб вибрати файл
-        </p>
+        <p className="text-sm text-foreground">{m.upload.prompt}</p>
         {loading ? (
-          <p className="text-xs text-muted">Читаємо файл…</p>
+          <p className="text-xs text-muted">{m.upload.reading}</p>
         ) : (
           fileName && (
             <p className="max-w-full truncate text-xs text-muted">
@@ -80,7 +80,7 @@ export default function UploadZone({ onFile, error, loading, fileName, fileInfo 
         <input
           ref={inputRef}
           type="file"
-          accept={ACCEPT}
+          accept={ACCEPT_IMAGES}
           className="hidden"
           onChange={(e) => {
             handleFiles(e.target.files);

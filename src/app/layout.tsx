@@ -15,13 +15,13 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "SProfile Editor",
   description:
-    "Нарізає GIF, PNG або JPG на слоти Steam showcase (Featured Artwork, Artwork Showcase) з превʼю того, як це виглядатиме на профілі.",
+    "Cut a Steam profile background into showcase panels (Featured Artwork, Artwork Showcase) with a live profile preview.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
-      lang="uk"
+      lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
