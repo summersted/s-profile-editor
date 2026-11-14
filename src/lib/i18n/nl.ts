@@ -175,6 +175,16 @@ const nl: Messages = {
       pass: (n, max) => `Run ${n} van max. ${max}`,
     },
   },
+  tasks: {
+    title: (n) => `Bezig · ${n}`,
+    collapse: "Inklappen",
+    expand: "Voortgang tonen",
+    reading: "Achtergrond lezen",
+    slicing: "Panelen snijden",
+    optimizing: (s) => `Vak ${s} optimaliseren`,
+    rendering: (p) => `Paneel ${p} renderen`,
+    openHint: "Klik om te openen",
+  },
   editor: {
     edit: "Paneel bewerken",
     editing: (p) => `Paneel ${p} · bewerken`,

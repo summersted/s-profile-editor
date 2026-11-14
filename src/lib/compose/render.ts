@@ -21,6 +21,20 @@ export interface RenderProgress {
   total: number;
 }
 
+/** Stage share of the whole render, so the percentage never goes back between stages. */
+const STAGE_SPAN: Record<RenderStage, [number, number]> = {
+  decode: [0, 10],
+  draw: [10, 90],
+  optimize: [90, 100],
+};
+
+/** Overall 0..100 progress of a render. */
+export function renderPercent(p: RenderProgress): number {
+  const [from, to] = STAGE_SPAN[p.stage];
+  const share = p.total > 0 ? Math.min(1, p.done / p.total) : 0;
+  return Math.round(from + (to - from) * share);
+}
+
 export interface RenderInput {
   /** Strip size, page px. */
   strip: { w: number; h: number };

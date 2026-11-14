@@ -166,6 +166,17 @@ export interface Messages {
       pass: (current: number, max: number) => string;
     };
   };
+  /** Status tray: background work that keeps running when the dialog is closed. */
+  tasks: {
+    title: (n: number) => string;
+    collapse: string;
+    expand: string;
+    reading: string;
+    slicing: string;
+    optimizing: (slot: number) => string;
+    rendering: (panel: number) => string;
+    openHint: string;
+  };
   /** Panel editor: layers, media library, text, undo/redo. */
   editor: {
     edit: string;
