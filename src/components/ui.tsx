@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 
 /** Shared look of text inputs and selects. */
 export const inputClass =
@@ -11,6 +11,88 @@ export const primaryButtonClass =
 
 export const secondaryButtonClass =
   "rounded bg-line font-medium text-foreground hover:bg-raised-hover disabled:cursor-not-allowed disabled:opacity-50";
+
+const TIP_WIDTH = 288;
+
+/**
+ * Small "i" button that shows `text` on hover, keyboard focus or click.
+ * The bubble is position: fixed and clamped to the viewport, so scroll
+ * containers (like the slot dialog) can't clip it.
+ */
+export function InfoTip({ text, label }: { text: string; label: string }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  const id = useId();
+  const [pos, setPos] = useState<{ left: number; top: number; above: boolean } | null>(null);
+
+  const show = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const left = Math.min(
+      Math.max(8, r.left + r.width / 2 - TIP_WIDTH / 2),
+      window.innerWidth - TIP_WIDTH - 8,
+    );
+    const above = r.top > 180;
+    setPos({ left, top: above ? r.top - 8 : r.bottom + 8, above });
+  };
+  const hide = () => setPos(null);
+
+  return (
+    <>
+      <button
+        ref={ref}
+        type="button"
+        aria-label={label}
+        aria-describedby={pos ? id : undefined}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        onClick={(e) => {
+          // Inside a <label>: don't let the click toggle or focus the field.
+          e.preventDefault();
+          if (pos) hide();
+          else show();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && pos) {
+            // Close the tooltip, not the dialog around it.
+            e.preventDefault();
+            e.stopPropagation();
+            hide();
+          }
+        }}
+        className="ml-1.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-muted text-[10px] font-semibold leading-none text-muted hover:border-accent hover:text-accent focus-visible:border-accent focus-visible:text-accent focus-visible:outline-none"
+      >
+        i
+      </button>
+      {pos && (
+        <span
+          id={id}
+          role="tooltip"
+          className="pointer-events-none fixed z-50 rounded border border-line bg-ink px-3 py-2 text-xs font-normal normal-case leading-relaxed tracking-normal text-foreground shadow-lg shadow-black/50"
+          style={{
+            left: pos.left,
+            top: pos.top,
+            width: TIP_WIDTH,
+            transform: pos.above ? "translateY(-100%)" : undefined,
+          }}
+        >
+          {text}
+        </span>
+      )}
+    </>
+  );
+}
+
+/** A field label with an info tooltip next to it. */
+export function TipLabel({ children, tip, tipLabel }: { children: ReactNode; tip: string; tipLabel: string }) {
+  return (
+    <span className="inline-flex items-center">
+      {children}
+      <InfoTip text={tip} label={tipLabel} />
+    </span>
+  );
+}
 
 export function SectionTitle({ children }: { children: ReactNode }) {
   return (
@@ -100,7 +182,7 @@ export function RangeField({
   format,
   onChange,
 }: {
-  label: string;
+  label: ReactNode;
   value: number;
   min: number;
   max: number;
@@ -170,7 +252,7 @@ export function CheckField({
   disabled,
   onChange,
 }: {
-  label: string;
+  label: ReactNode;
   hint?: string;
   checked: boolean;
   disabled?: boolean;

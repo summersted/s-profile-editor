@@ -3,8 +3,8 @@ import { GIF_INPUT } from "../gif/gifsicle";
 import { FILE_LIMIT_BYTES } from "../steam/showcases";
 
 /**
- * Optimizer configuration and the pure logic that turns it into gifsicle
- * commands. Nothing here touches wasm or the DOM.
+ * Optimizer configuration and the pure logic that turns it into concrete
+ * encoder settings. Nothing here touches wasm or the DOM.
  */
 
 export type OptimizeMode = "auto" | "manual";
@@ -29,27 +29,68 @@ export interface OptimizeSettings {
   targetBytes: number;
   /** Auto mode: which kinds of quality loss the optimizer may use to hit the target. */
   auto: {
+    /** GIF: lossy compression. */
     lossy: boolean;
+    /** GIF: palette reduction. */
     colors: boolean;
+    /** GIF: dropping frames. */
     fps: boolean;
+    /** Still image: converting PNG to JPEG. */
+    jpeg: boolean;
   };
-  /** Manual mode: applied exactly as set. */
+  /** Manual mode for GIFs: applied exactly as set. */
   manual: OptimizeStep;
+  /** Manual mode for still images. */
+  image: {
+    format: "png" | "jpeg";
+    /** JPEG quality, 0..1. */
+    quality: number;
+  };
 }
 
 export const DEFAULT_OPTIMIZE_SETTINGS: OptimizeSettings = {
   mode: "auto",
   targetBytes: FILE_LIMIT_BYTES,
-  auto: { lossy: true, colors: true, fps: false },
+  auto: { lossy: true, colors: true, fps: false, jpeg: true },
   manual: { lossy: 40, colors: 256, frameStep: 1, scale: 1 },
+  image: { format: "jpeg", quality: 0.9 },
 };
 
 export const LOSSY_RANGE = { min: 0, max: 200, step: 5 } as const;
 export const COLOR_OPTIONS = [256, 128, 64, 32, 16] as const;
 export const FRAME_STEP_OPTIONS = [1, 2, 3, 4] as const;
 export const SCALE_OPTIONS = [1, 0.75, 0.5] as const;
+export const JPEG_QUALITY_RANGE = { min: 0.4, max: 1, step: 0.01 } as const;
 
-type AutoAxis = keyof OptimizeSettings["auto"];
+/** JPEG qualities auto mode tries for stills, best first. */
+export const JPEG_AUTO_LADDER: readonly number[] = [0.95, 0.92, 0.88, 0.84, 0.8, 0.75, 0.7, 0.6, 0.5, 0.4];
+
+/**
+ * What the optimizer applied (or is trying). Kept structured so the UI can
+ * render it in the current language.
+ */
+export type OptimizeLabel =
+  | { type: "gif"; step: OptimizeStep }
+  | { type: "jpeg"; quality: number };
+
+/** What the optimizer is busy with right now. */
+export type OptimizePhase =
+  | { kind: "read" }
+  | { kind: "decode" }
+  | { kind: "attempt"; label: OptimizeLabel };
+
+/**
+ * Progress report. `done` encoding passes are finished out of at most `total`;
+ * `total` is a worst-case bound that only shrinks, so done/total never goes back.
+ */
+export interface OptimizeProgress {
+  phase: OptimizePhase;
+  done: number;
+  total: number;
+}
+
+type GifAxisAllow = Pick<OptimizeSettings["auto"], "lossy" | "colors" | "fps">;
+type AutoAxis = keyof GifAxisAllow;
 
 /**
  * Auto-mode escalation, ordered by how much each move hurts visually:
@@ -79,7 +120,7 @@ const MIN_FRAMES_AFTER_DROP = 4;
  * The ladder auto mode climbs: starts lossless, every next rung is strictly
  * more aggressive (so output size shrinks along it), limited to allowed axes.
  */
-export function buildAutoLadder(allow: OptimizeSettings["auto"], frameCount: number): OptimizeStep[] {
+export function buildAutoLadder(allow: GifAxisAllow, frameCount: number): OptimizeStep[] {
   const ladder: OptimizeStep[] = [LOSSLESS_STEP];
   let current = LOSSLESS_STEP;
   for (const [axis, value] of AUTO_MOVES) {
@@ -131,22 +172,4 @@ function frameSelection(step: number, delaysCs: readonly number[]): string[] {
     args.push(`#${i}`);
   }
   return args;
-}
-
-export function describeStep(step: OptimizeStep): string {
-  const parts: string[] = [];
-  if (step.lossy > 0) parts.push(`lossy ${step.lossy}`);
-  if (step.colors < 256) parts.push(`${step.colors} ${colorsWord(step.colors)}`);
-  if (step.frameStep > 1) parts.push(`кожен ${step.frameStep}-й кадр`);
-  if (step.scale < 1) parts.push(`масштаб ${Math.round(step.scale * 100)}%`);
-  return parts.length ? parts.join(" · ") : "без втрат";
-}
-
-/** Ukrainian plural of «колір» for a count: 32 кольори, 16 кольорів. */
-function colorsWord(n: number): string {
-  const last = n % 10;
-  const teens = n % 100 >= 11 && n % 100 <= 14;
-  if (last === 1 && !teens) return "колір";
-  if (last >= 2 && last <= 4 && !teens) return "кольори";
-  return "кольорів";
 }

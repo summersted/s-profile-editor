@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { errorMessage } from "@/lib/async";
+import type { Failure } from "@/lib/errors";
 import { loadSource, releaseSource } from "@/lib/image/decode";
 import type { SourceImage } from "@/lib/types";
 
@@ -12,7 +12,7 @@ import type { SourceImage } from "@/lib/types";
  */
 export function useSource() {
   const [source, setSource] = useState<SourceImage | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Failure | null>(null);
   const [loading, setLoading] = useState(false);
 
   const latestLoad = useRef(0);
@@ -34,7 +34,7 @@ export function useSource() {
       setError(null);
       return true;
     } catch (e) {
-      if (id === latestLoad.current) setError(errorMessage(e, "Не вдалося прочитати файл"));
+      if (id === latestLoad.current) setError({ kind: "read", cause: e, filename: file.name });
       return false;
     } finally {
       if (id === latestLoad.current) setLoading(false);

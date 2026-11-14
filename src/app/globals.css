@@ -19,6 +19,9 @@
   --color-danger: #f4a0a0;
   --color-danger-line: #7a2b2b;
   --color-danger-bg: #3a1f1f;
+  /* Steam profile accents: online status, level ring. */
+  --color-online: #57cbde;
+  --color-level: #c02942;
 }
 
 @theme inline {

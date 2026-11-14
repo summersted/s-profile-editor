@@ -1,3 +1,4 @@
+import { AppError } from "../errors";
 import { gifDurationMs, parseGifInfo } from "../gif/info";
 import type { SourceImage } from "../types";
 
@@ -6,7 +7,7 @@ export async function loadSource(file: File): Promise<SourceImage> {
   const isGif = file.type === "image/gif" || /\.gif$/i.test(file.name);
   const meta = isGif ? await readGif(file) : await readStatic(file);
   if (meta.width < 1 || meta.height < 1) {
-    throw new Error("Зображення має нульовий розмір");
+    throw new AppError("zeroSize");
   }
   return { file, ...meta, previewUrl: URL.createObjectURL(file) };
 }
@@ -16,7 +17,7 @@ type SourceMeta = Omit<SourceImage, "file" | "previewUrl">;
 async function readGif(file: File): Promise<SourceMeta> {
   const info = parseGifInfo(new Uint8Array(await file.arrayBuffer()));
   if (info.frameCount === 0) {
-    throw new Error("GIF не містить жодного кадру");
+    throw new AppError("noFrames");
   }
   return {
     kind: "gif",
@@ -32,7 +33,7 @@ async function readStatic(file: File): Promise<SourceMeta> {
   try {
     bitmap = await createImageBitmap(file);
   } catch {
-    throw new Error("Не вдалося прочитати файл як зображення (підтримуються GIF, PNG, JPG)");
+    throw new AppError("unreadableImage");
   }
   const meta: SourceMeta = {
     kind: "static",
