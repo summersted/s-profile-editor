@@ -1,12 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { renderKey, useCompositions, type ApplyInput } from "@/hooks/useCompositions";
+import { useMediaLibrary } from "@/hooks/useMediaLibrary";
 import { useOverrides } from "@/hooks/useOverrides";
 import { useSlices } from "@/hooks/useSlices";
 import { downloadAll } from "@/lib/download";
 import { LOCALES, setLocale, useI18n, type I18n } from "@/lib/i18n";
 import { DEFAULT_OPTIMIZE_SETTINGS, type OptimizeSettings } from "@/lib/optimize/settings";
-import { buildPlan, fittedHeight, panelKey, showcaseUsage, slotId } from "@/lib/steam/plan";
+import {
+  buildPlan,
+  fittedHeight,
+  ownFileCrop,
+  ownFileRect,
+  panelKey,
+  showcaseUsage,
+  slotId,
+  stripBackgroundRect,
+} from "@/lib/steam/plan";
 import { DEFAULT_LAYOUT, PROFILE } from "@/lib/steam/profile";
 import { FILE_LIMIT_BYTES, ROW_HEIGHT, SHOWCASES, stripWidth, type ShowcaseId } from "@/lib/steam/showcases";
 import type { PlannedSlice, SourceImage } from "@/lib/types";
@@ -14,6 +25,7 @@ import { useSource } from "@/hooks/useSource";
 import ControlsPanel, { type SliceSettings } from "./ControlsPanel";
 import HelpBlurb from "./HelpBlurb";
 import PanelDialog from "./PanelDialog";
+import PanelEditor from "./editor/PanelEditor";
 import ProfilePreview from "./ProfilePreview";
 import UploadZone from "./UploadZone";
 import { SectionTitle, inputClass, secondaryButtonClass } from "./ui";
@@ -54,6 +66,10 @@ export default function Editor() {
     useState<OptimizeSettings>(DEFAULT_OPTIMIZE_SETTINGS);
   /** Open dialog's slot, by `slotId`: survives re-numbering when a panel is split or merged. */
   const [openSlot, setOpenSlot] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const comps = useCompositions();
+  const { edits, rendering: composing, apply: applyComposition } = comps;
+  const library = useMediaLibrary();
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -74,15 +90,73 @@ export default function Editor() {
     [spec, settings, source],
   );
 
-  // Panels are cut automatically whenever the background, the layout or a slot's own file changes.
+  const mediaMap = useMemo(
+    () => new Map(library.items.map((item) => [item.id, item.image])),
+    [library.items],
+  );
+
+  /** What each panel's composition is rendered from: its strip, and the own file or background under it. */
+  const applyInputs = useMemo(() => {
+    const out: Record<string, ApplyInput> = {};
+    if (!source) return out;
+    for (const p of plan.panels) {
+      const key = panelKey(p.index);
+      const ownImage = overrides[key];
+      out[key] = {
+        strip: { w: p.strip.w, h: p.strip.h },
+        density: plan.density,
+        base: ownImage
+          ? { image: ownImage, rect: ownFileCrop(ownImage, p.strip, p.strip) }
+          : { image: source, rect: stripBackgroundRect(plan, p.strip, source) },
+        media: mediaMap,
+      };
+    }
+    return out;
+  }, [source, plan, overrides, mediaMap]);
+
+  /** Edited panels replace their picture with the rendered composition. */
+  const composedImages = useMemo(() => {
+    const out: Record<string, SourceImage> = {};
+    for (const [key, edit] of Object.entries(edits)) {
+      if (edit.applied && applyInputs[key]) out[key] = edit.applied.image;
+    }
+    return out;
+  }, [edits, applyInputs]);
+  /** What each panel shows instead of the background: edited render > own file. */
+  const panelSources = useMemo(() => ({ ...overrides, ...composedImages }), [overrides, composedImages]);
+  const editedPanels = useMemo(
+    () => new Set(Object.keys(composedImages).map(Number)),
+    [composedImages],
+  );
+  const usedMediaIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const edit of Object.values(edits)) {
+      for (const l of edit.history.present.layers) if (l.kind === "media") ids.add(l.mediaId);
+    }
+    return ids;
+  }, [edits]);
+
+  // A rendered panel goes stale when its base or size changes: re-render it in the background.
+  useEffect(() => {
+    const stale = Object.entries(edits).filter(
+      ([key, e]) => e.applied && applyInputs[key] && e.applied.key !== renderKey(applyInputs[key]) && !composing[key],
+    );
+    if (stale.length === 0) return;
+    const timer = setTimeout(() => {
+      for (const [key] of stale) applyComposition(key, applyInputs[key]);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [edits, applyInputs, composing, applyComposition]);
+
+  // Panels are cut automatically whenever the background, the layout or a panel's picture changes.
   useEffect(() => {
     if (!source) return;
     const timer = setTimeout(
-      () => runSlicing(source, plan, overrides),
+      () => runSlicing(source, plan, panelSources),
       RESLICE_DELAY_MS[source.kind],
     );
     return () => clearTimeout(timer);
-  }, [source, plan, overrides, runSlicing]);
+  }, [source, plan, panelSources, runSlicing]);
 
   async function handleFile(file: File) {
     // Files cut from the previous background are meaningless for the new one.
@@ -121,6 +195,59 @@ export default function Editor() {
     });
   }
 
+  /** Render the edited panel, then leave the editor. */
+  async function finishEditing(panel: number) {
+    const key = panelKey(panel);
+    if (applyInputs[key]) await applyComposition(key, applyInputs[key]);
+    setEditing(false);
+  }
+
+  function renderEditor(panel: number) {
+    const p = plan.panels[panel];
+    const key = panelKey(panel);
+    const edit = comps.get(key);
+    const ownImage = overrides[key];
+    let baseStyle: CSSProperties;
+    if (ownImage) {
+      const drawn = ownFileRect(ownImage, p.strip);
+      baseStyle = {
+        backgroundImage: `url(${ownImage.previewUrl})`,
+        backgroundSize: `${drawn.w}px ${drawn.h}px`,
+        backgroundPosition: `${drawn.x - p.strip.x}px ${drawn.y - p.strip.y}px`,
+        backgroundRepeat: "no-repeat",
+      };
+    } else {
+      baseStyle = {
+        backgroundImage: source ? `url(${source.previewUrl})` : undefined,
+        backgroundSize: `${plan.bg.w}px ${plan.bg.h}px`,
+        backgroundPosition: `${plan.bg.x - p.strip.x}px ${plan.bg.y - p.strip.y}px`,
+        backgroundRepeat: "no-repeat",
+      };
+    }
+    return (
+      <PanelEditor
+        strip={{ w: p.strip.w, h: p.strip.h }}
+        slots={plan.slices
+          .filter((s) => s.panel === panel)
+          .map((s) => ({ x: s.page.x - p.strip.x, y: 0, w: s.page.w, h: s.page.h }))}
+        baseStyle={baseStyle}
+        baseFrameCount={(ownImage ?? source)?.frameCount ?? 1}
+        composition={edit.history.present}
+        canUndo={edit.history.past.length > 0}
+        canRedo={edit.history.future.length > 0}
+        onChange={(fn, mergeKey) => comps.change(key, fn, mergeKey)}
+        onUndo={() => comps.undo(key)}
+        onRedo={() => comps.redo(key)}
+        media={library.items}
+        usedMediaIds={usedMediaIds}
+        mediaError={library.error}
+        onAddMedia={library.add}
+        onRemoveMedia={library.remove}
+        rendering={composing[key]}
+      />
+    );
+  }
+
   /** Back to the background; the panel returns to the common height. */
   function resetOwn(s: PlannedSlice) {
     own.reset(panelKey(s.panel));
@@ -139,7 +266,7 @@ export default function Editor() {
   const sameKind = files.filter((f) => f.kind === openFile?.kind).map((f) => f.index);
   const totalBytes = files.reduce((sum, f) => sum + f.blob.size, 0);
   const oversizeCount = files.filter((f) => f.blob.size > FILE_LIMIT_BYTES).length;
-  const partlyOutside = plan.slices.some((s) => s.coverage < 1 && !overrides[panelKey(s.panel)]);
+  const partlyOutside = plan.slices.some((s) => s.coverage < 1 && !panelSources[panelKey(s.panel)]);
   const lowRes = source !== null && source.width < PROFILE.bgWidth * 0.95;
 
   let status = "";
@@ -208,6 +335,11 @@ export default function Editor() {
             </button>
           </div>
 
+          {comps.error && (
+            <p className="rounded border border-danger-line bg-danger-bg px-3 py-2 text-xs text-danger">
+              {failure(comps.error)}
+            </p>
+          )}
           {slices.error && (
             <p className="rounded border border-danger-line bg-danger-bg px-3 py-2 text-xs text-danger">
               {failure(slices.error)}
@@ -228,7 +360,8 @@ export default function Editor() {
             plan={plan}
             layout={settings.layout}
             imageUrl={source?.previewUrl ?? null}
-            overrides={overrides}
+            overrides={panelSources}
+            editedPanels={editedPanels}
             files={files}
             slicing={slices.slicing}
             optimizing={slices.optimizing}
@@ -251,6 +384,14 @@ export default function Editor() {
           onPanelTypeChange={(type) => setPanelType(openPanel.index, type)}
           file={openFile}
           override={overrides[panelKey(openPlanned.panel)]}
+          customSource={!!panelSources[panelKey(openPlanned.panel)]}
+          editing={editing}
+          rendering={!!composing[panelKey(openPanel.index)]}
+          onEditingChange={(on) => {
+            if (on) setEditing(true);
+            else finishEditing(openPanel.index);
+          }}
+          editor={editing && source ? renderEditor(openPanel.index) : null}
           outsideBackground={openPlanned.coverage === 0}
           slicing={slices.slicing}
           stripWidth={openPanel.strip.w}
@@ -264,7 +405,15 @@ export default function Editor() {
           onOptimize={() => slices.optimize([openPlanned.index], optimizeSettings)}
           onOptimizeAll={() => slices.optimize(sameKind, optimizeSettings)}
           onRevert={() => slices.revert(openPlanned.index)}
-          onClose={() => setOpenSlot(null)}
+          onClose={() => {
+            // Closing mid-edit keeps the edits: render them in the background.
+            if (editing) {
+              const key = panelKey(openPanel.index);
+              if (applyInputs[key]) applyComposition(key, applyInputs[key]);
+            }
+            setEditing(false);
+            setOpenSlot(null);
+          }}
         />
       )}
     </div>
